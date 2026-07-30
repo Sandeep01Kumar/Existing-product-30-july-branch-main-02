@@ -4,51 +4,63 @@ const http = require('node:http');
 
 const app = require('../app');
 
-// The application is exported without binding anything, so the suite owns the
-// lifecycle. Port 0 asks the operating system for an ephemeral port, which means
-// the tests never collide with a server already running on 3000.
+// The application module exports the Express instance without binding anything,
+// so this suite owns the whole lifecycle: it wraps the app in its own HTTP
+// server, starts that server before the tests and shuts it down afterwards.
 const server = http.createServer(app);
 
-const get = (path) => new Promise((resolve, reject) => {
-  const req = http.get(
-    { host: '127.0.0.1', port: server.address().port, path },
-    (res) => {
-      const chunks = [];
-      res.on('data', (chunk) => chunks.push(chunk));
-      res.on('end', () => resolve({
-        status: res.statusCode,
-        headers: res.headers,
-        body: Buffer.concat(chunks)
-      }));
-    }
-  );
-  req.on('error', reject);
-});
-
+// Port 0 asks the operating system for an ephemeral port, so the suite never
+// competes with a development server that is already bound to the fixed port.
 before(() => new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)));
+
+// Closing the listener is functionally required rather than cosmetic: an open
+// server handle keeps the event loop alive and the runner would never finish.
 after(() => new Promise((resolve) => server.close(resolve)));
 
-test('GET / returns the original greeting unchanged', async () => {
-  const res = await get('/');
-  assert.equal(res.status, 200);
-  assert.equal(res.headers['content-type'], 'text/plain');
-  assert.equal(res.body.toString(), 'Hello, World!\n');
-  assert.equal(res.body.length, 14);
-  assert.equal(res.headers['x-powered-by'], undefined);
-  assert.equal(res.headers.etag, undefined);
+// Minimal promisified GET client, which is why no HTTP testing package is
+// needed. The assigned port is read lazily, inside the helper, because
+// server.address() is null until the before hook above has resolved.
+const get = (path) => new Promise((resolve, reject) => {
+  const request = http.get({ hostname: '127.0.0.1', port: server.address().port, path }, (res) => {
+    const chunks = [];
+    res.on('data', (chunk) => chunks.push(chunk));
+    res.on('end', () => resolve({
+      status: res.statusCode,
+      headers: res.headers,
+      body: Buffer.concat(chunks).toString(),
+    }));
+  });
+  request.on('error', reject);
 });
 
-test('GET /good-evening returns the evening greeting', async () => {
-  const res = await get('/good-evening');
-  assert.equal(res.status, 200);
-  assert.equal(res.headers['content-type'], 'text/plain');
-  assert.equal(res.body.toString(), 'Good evening\n');
-  assert.equal(res.body.length, 13);
+// Regression guard for the pre-existing response contract. Every value is
+// compared with strict equality against the exact literal, including the
+// trailing newline, so a body of 13 or 15 bytes fails instead of passing
+// quietly. The two header assertions pin the absence of the metadata Express
+// would add on its own: the framework banner and an entity tag.
+test('GET / returns the original greeting, byte-identical', async () => {
+  const response = await get('/');
+  assert.equal(response.status, 200);
+  assert.equal(response.headers['content-type'], 'text/plain');
+  assert.equal(response.body, 'Hello, World!\n');
+  assert.equal(response.headers['x-powered-by'], undefined);
+  assert.equal(response.headers.etag, undefined);
 });
 
-test('an unregistered path returns a plain-text 404', async () => {
-  const res = await get('/no-such-endpoint');
-  assert.equal(res.status, 404);
-  assert.equal(res.headers['content-type'], 'text/plain');
-  assert.equal(res.body.toString(), 'Not Found\n');
+// Acceptance test for the endpoint this change adds.
+test('GET /good-evening returns the new greeting', async () => {
+  const response = await get('/good-evening');
+  assert.equal(response.status, 200);
+  assert.equal(response.headers['content-type'], 'text/plain');
+  assert.equal(response.body, 'Good evening\n');
+});
+
+// Routing narrows the response surface: paths that match no route now reach the
+// terminal handler, which answers in plain text instead of the framework's HTML
+// default. This also proves the pathless handler registration dispatches.
+test('GET on an unregistered path returns 404', async () => {
+  const response = await get('/no-such-route');
+  assert.equal(response.status, 404);
+  assert.equal(response.headers['content-type'], 'text/plain');
+  assert.equal(response.body, 'Not Found\n');
 });
