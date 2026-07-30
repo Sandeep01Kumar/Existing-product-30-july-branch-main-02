@@ -1,27 +1,20 @@
-const { test, before, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 
 const app = require('../app');
 
 // The application module exports the Express instance without binding anything,
-// so this suite owns the whole lifecycle: it wraps the app in its own HTTP
-// server, starts that server before the tests and shuts it down afterwards.
-const server = http.createServer(app);
-
-// Port 0 asks the operating system for an ephemeral port, so the suite never
-// competes with a development server that is already bound to the fixed port.
-before(() => new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)));
-
-// Closing the listener is functionally required rather than cosmetic: an open
-// server handle keeps the event loop alive and the runner would never finish.
-after(() => new Promise((resolve) => server.close(resolve)));
+// so this suite owns the whole lifecycle. Only the `test` export of node:test is
+// used: the standalone before/after hooks arrived in Node.js 18.8.0, while
+// package.json permits any Node.js 18 release, so every test starts and stops its
+// own server instead of sharing one opened by a hook.
 
 // Minimal promisified GET client, which is why no HTTP testing package is
-// needed. The assigned port is read lazily, inside the helper, because
-// server.address() is null until the before hook above has resolved.
-const get = (path) => new Promise((resolve, reject) => {
-  const request = http.get({ hostname: '127.0.0.1', port: server.address().port, path }, (res) => {
+// needed. The port is a parameter because the caller below owns the listener and
+// only learns the assigned port once it is bound.
+const httpGet = (port, path) => new Promise((resolve, reject) => {
+  const request = http.get({ hostname: '127.0.0.1', port, path }, (res) => {
     const chunks = [];
     res.on('data', (chunk) => chunks.push(chunk));
     res.on('end', () => resolve({
@@ -32,6 +25,21 @@ const get = (path) => new Promise((resolve, reject) => {
   });
   request.on('error', reject);
 });
+
+// Port 0 asks the operating system for an ephemeral port, so the suite never
+// competes with a development server that is already bound to the fixed port.
+// Closing the listener is functionally required rather than cosmetic: an open
+// server handle keeps the event loop alive and the runner would never finish, so
+// the finally block releases it even when an assertion throws.
+const get = async (path) => {
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    return await httpGet(server.address().port, path);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+};
 
 // Regression guard for the pre-existing response contract. Every value is
 // compared with strict equality against the exact literal, including the
