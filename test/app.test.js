@@ -4,9 +4,6 @@ const http = require('node:http');
 
 const app = require('../app');
 
-// The application module exports the Express instance without binding anything,
-// so this suite owns the whole lifecycle: it wraps the app in its own HTTP
-// server, starts that server before the tests and shuts it down afterwards.
 const server = http.createServer(app);
 
 // Port 0 asks the operating system for an ephemeral port, so the suite never
@@ -34,11 +31,6 @@ const get = (path) => new Promise((resolve, reject) => {
   request.on('error', reject);
 });
 
-// Regression guard for the pre-existing response contract. Every value is
-// compared with strict equality against the exact literal, including the
-// trailing newline, so a body of 13 or 15 bytes fails instead of passing
-// quietly. The two header assertions pin the absence of the metadata Express
-// would add on its own: the framework banner and an entity tag.
 test('GET / returns the original greeting, byte-identical', async () => {
   const response = await get('/');
   assert.equal(response.status, 200);
@@ -48,7 +40,6 @@ test('GET / returns the original greeting, byte-identical', async () => {
   assert.equal(response.headers.etag, undefined);
 });
 
-// Acceptance test for the endpoint this change adds.
 test('GET /good-evening returns the new greeting', async () => {
   const response = await get('/good-evening');
   assert.equal(response.status, 200);
@@ -56,9 +47,6 @@ test('GET /good-evening returns the new greeting', async () => {
   assert.equal(response.body, 'Good evening\n');
 });
 
-// Routing narrows the response surface: paths that match no route now reach the
-// terminal handler, which answers in plain text instead of the framework's HTML
-// default. This also proves the pathless handler registration dispatches.
 test('GET on an unregistered path returns 404', async () => {
   const response = await get('/no-such-route');
   assert.equal(response.status, 404);
