@@ -10,7 +10,7 @@
     "author": "hxu",
     "license": "MIT",
     "engines": {
-        "node": ">=18"
+        "node": "^18.19.0 || >=20.7.0"
     },
     "dependencies": {
         "express": "^5.2.1"

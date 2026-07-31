@@ -11,7 +11,12 @@ A minimal HTTP service built on [Express](https://expressjs.com/) 5, declared as
 
 ## Requirements
 
-Node.js 18 or higher.
+Node.js 18.19 or newer on the 18.x line, or 20.7 or newer. That is the range
+`^18.19.0 || >=20.7.0` that `package.json` declares in `engines.node`. Express 5
+itself needs only Node.js 18, but `npm test` relies on the built-in test runner's
+top-level `before` and `after` hooks: earlier 18.x releases, every 19.x release
+and 20.0 through 20.6 either lack those hooks or never await them, so the suite
+fails or hangs on those versions.
 
 ## Install
 
